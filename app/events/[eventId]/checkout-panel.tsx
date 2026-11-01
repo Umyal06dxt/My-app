@@ -246,6 +246,15 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
                 allow="payment"
               />
             </div>
+            <a
+              href={url}
+              className="sticker block rounded-full bg-lilac px-5 py-3 text-center font-display font-semibold text-cocoa"
+            >
+              trouble paying? continue on Tunyt →
+            </a>
+            <p className="text-center text-xs font-semibold text-cocoa-soft">
+              Same order, same total. You&apos;ll come right back here with your tickets.
+            </p>
           </div>
         )}
 
