@@ -5,7 +5,11 @@ import { createCheckoutSession, siteUrl, TunytError } from "@/lib/tunyt";
 import { MAX_PER_LINE } from "@/lib/tickets";
 import { rememberOrder } from "@/lib/orders";
 
-export type CheckoutState = { error: string | null };
+export type CheckoutState = {
+  error: string | null;
+  /** Set once a session exists: the page then runs the on-site login + payment frame. */
+  session?: { sessionId: string; url: string; amountPaise: number; nonce: string };
+};
 
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 
@@ -41,16 +45,15 @@ export async function startCheckout(_prev: CheckoutState, form: FormData): Promi
 
   const orderId = crypto.randomUUID();
   const base = siteUrl();
-  let url: string;
+  let session;
   try {
-    const session = await createCheckoutSession({
+    session = await createCheckoutSession({
       orderId,
       eventId,
       items,
       successUrl: `${base}/thanks`,
       cancelUrl: `${base}/events/${encodeURIComponent(eventId)}?cancelled=1`,
     });
-    url = session.url;
   } catch (e) {
     if (e instanceof TunytError) {
       if (e.status === 429) return { error: "We're busy right now. Please try again in a few seconds." };
@@ -67,5 +70,10 @@ export async function startCheckout(_prev: CheckoutState, form: FormData): Promi
   // Remember which orders this browser started, so /thanks shows tickets only to the buyer.
   await rememberOrder(orderId);
 
-  redirect(url); // buyer signs in and pays on tunyt.com, then returns to /thanks
+  // Hosted mode: send the buyer to tunyt.com. Default: stay on this site (embedded checkout).
+  if (process.env.CHECKOUT_MODE === "hosted") redirect(session.url);
+  return {
+    error: null,
+    session: { sessionId: session.sessionId, url: session.url, amountPaise: session.amountPaise, nonce: orderId },
+  };
 }

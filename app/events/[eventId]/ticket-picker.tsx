@@ -4,6 +4,7 @@ import { useActionState, useState, useSyncExternalStore } from "react";
 import { startCheckout, type CheckoutState } from "@/app/actions";
 import type { TunytEvent } from "@/lib/tunyt";
 import { rupees } from "@/lib/format";
+import { CheckoutPanel } from "./checkout-panel";
 import { currentPrice, eventBlocker, MAX_PER_LINE, remaining, ticketBlocker } from "@/lib/tickets";
 
 const TINTS = ["bg-pink-soft", "bg-lilac-soft", "bg-butter-soft", "bg-mint-soft"];
@@ -16,10 +17,12 @@ const subscribe = (cb: () => void) => {
 const nowSnapshot = () => Math.floor(Date.now() / 30_000) * 30_000;
 const serverSnapshot = () => null;
 
-export function TicketPicker({ event }: { event: TunytEvent }) {
+export function TicketPicker({ event, apiBase }: { event: TunytEvent; apiBase: string }) {
   const now = useSyncExternalStore(subscribe, nowSnapshot, serverSnapshot);
   const [qty, setQty] = useState<Record<string, number>>({});
   const [state, action, pending] = useActionState<CheckoutState, FormData>(startCheckout, { error: null });
+  // Each new session (nonce) opens the on-site checkout panel until the buyer closes it.
+  const [closedNonce, setClosedNonce] = useState<string | null>(null);
 
   const types = event.ticketTypes ?? [];
   const blocked = now == null ? null : eventBlocker(event, now);
@@ -43,6 +46,10 @@ export function TicketPicker({ event }: { event: TunytEvent }) {
     setQty((q) => ({ ...q, [id]: Math.max(0, Math.min(max, n)) }));
 
   return (
+    <>
+    {state.session && closedNonce !== state.session.nonce && (
+      <CheckoutPanel apiBase={apiBase} session={state.session} onClose={() => setClosedNonce(state.session!.nonce)} />
+    )}
     <form action={action} className="sticker rounded-[2rem] bg-paper p-6 hover:!transform-none">
       <input type="hidden" name="eventId" value={event.eventId} />
       <h2 className="mb-1 font-display text-2xl font-semibold">pick your tickets 🎟️</h2>
@@ -116,11 +123,12 @@ export function TicketPicker({ event }: { event: TunytEvent }) {
             {pending ? "getting your tickets ready… 💫" : count === 0 ? "pick a ticket above ☝️" : "checkout 💖"}
           </button>
           <p className="mt-3 text-center text-xs font-semibold text-cocoa-soft">
-            🔒 you&apos;ll sign in with a quick code &amp; pay safely (UPI, cards &amp; more) with Tunyt
+            🔒 sign in with a quick code &amp; pay right here (UPI, cards &amp; more), secured by Tunyt
           </p>
         </>
       )}
     </form>
+    </>
   );
 }
 
