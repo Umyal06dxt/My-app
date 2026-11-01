@@ -17,7 +17,7 @@ const subscribe = (cb: () => void) => {
 const nowSnapshot = () => Math.floor(Date.now() / 30_000) * 30_000;
 const serverSnapshot = () => null;
 
-export function TicketPicker({ event, apiBase }: { event: TunytEvent; apiBase: string }) {
+export function TicketPicker({ event }: { event: TunytEvent }) {
   const now = useSyncExternalStore(subscribe, nowSnapshot, serverSnapshot);
   const [qty, setQty] = useState<Record<string, number>>({});
   const [state, action, pending] = useActionState<CheckoutState, FormData>(startCheckout, { error: null });
@@ -48,7 +48,7 @@ export function TicketPicker({ event, apiBase }: { event: TunytEvent; apiBase: s
   return (
     <>
     {state.session && closedNonce !== state.session.nonce && (
-      <CheckoutPanel apiBase={apiBase} session={state.session} onClose={() => setClosedNonce(state.session!.nonce)} />
+      <CheckoutPanel session={state.session} onClose={() => setClosedNonce(state.session!.nonce)} />
     )}
     <form action={action} className="sticker rounded-[2rem] bg-paper p-6 hover:!transform-none">
       <input type="hidden" name="eventId" value={event.eventId} />

@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { rupees } from "@/lib/format";
+import { requestOtp, verifyOtp } from "./otp-actions";
 
 type Props = {
-  apiBase: string;
   session: { sessionId: string; url: string; amountPaise: number };
   onClose: () => void;
 };
@@ -27,7 +27,7 @@ function looksValid(id: string) {
   return id.includes("@") ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id) : /^\+\d{8,15}$/.test(id);
 }
 
-export function CheckoutPanel({ apiBase, session, onClose }: Props) {
+export function CheckoutPanel({ session, onClose }: Props) {
   const [step, setStep] = useState<Step>("identify");
   const [identifier, setIdentifier] = useState("");
   const [otp, setOtp] = useState("");
@@ -41,22 +41,6 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
   const router = useRouter();
 
   const tunytOrigin = new URL(session.url).origin; // e.g. https://www.tunyt.com
-  const base = `${apiBase}/embedded-checkout/${encodeURIComponent(session.sessionId)}`;
-
-  async function post(path: string, body: unknown) {
-    const r = await fetch(base + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const json = await r.json().catch(() => null);
-    if (!r.ok || json?.status === "error") {
-      const msg = json?.issues?.[0]?.message ?? json?.errors?.[0]?.message ?? json?.message ?? `Error ${r.status}`;
-      throw new Error(msg);
-    }
-    return json?.data ?? {};
-  }
-
   async function sendCode(e?: React.FormEvent) {
     e?.preventDefault();
     const id = normalise(identifier);
@@ -64,7 +48,9 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await post("/otp/request", { identifier: id });
+      // Sent from our server (no browser CORS); Tunyt checks it comes from this site's origin.
+      const r = await requestOtp(session.sessionId, id);
+      if (!r.ok) throw new Error(r.message);
       setIdentifier(id);
       setStep("code");
       setNote(`We sent a code to ${id} 💌`);
@@ -82,11 +68,10 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const data = await post("/otp/verify", { identifier, otp: otp.trim() });
-      if (!data.checkoutToken) throw new Error("Couldn't sign you in. Please try again.");
-      const buyer = data.buyer ?? data.user ?? data;
-      setBuyerName(buyer?.name || buyer?.firstName || null);
-      setToken(data.checkoutToken);
+      const r = await verifyOtp(session.sessionId, identifier, otp.trim());
+      if (!r.ok) throw new Error(r.message);
+      setBuyerName(r.buyerName ?? null);
+      setToken(r.checkoutToken!);
       setStep("pay");
       setNote(null);
     } catch (err) {

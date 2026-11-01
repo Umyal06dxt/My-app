@@ -334,3 +334,25 @@ export function resendTicket(ticketId: string, idempotencyKey: string) {
 export function getBalance() {
   return call<Balance>("/partner/balance", { key: secretKey() });
 }
+
+/* ---------- Embedded checkout (on-site login), called from our server ---------- */
+
+/**
+ * The OTP endpoints need no API key: the session id is the credential, and Tunyt only accepts them
+ * from the origin of the session's return URLs. Calling them from the server (with that Origin)
+ * avoids browser CORS entirely.
+ */
+export async function embeddedCheckout<T>(sessionId: string, path: "/otp/request" | "/otp/verify", body: unknown) {
+  const res = await fetch(`${API}/embedded-checkout/${encodeURIComponent(sessionId)}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: siteUrl() },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = await res.json().catch(() => null);
+  if (res.ok && json?.status !== "error") return (json?.data ?? {}) as T;
+  console.error("[tunyt] embedded", path, res.status, json?.message, json?.requestId);
+  const message =
+    json?.issues?.[0]?.message ?? json?.errors?.[0]?.message ?? json?.message ?? `HTTP ${res.status}`;
+  throw new TunytError(message, res.status, json?.requestId, json?.issues);
+}
