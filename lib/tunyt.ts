@@ -282,7 +282,7 @@ export async function listAllEvents(): Promise<TunytEvent[]> {
     const qs = new URLSearchParams({ limit: "100" });
     if (cursor) qs.set("cursor", cursor);
     const page: { items: TunytEvent[]; nextCursor: string | null } = await call(`/partner/events?${qs}`, {
-      key: secretKey(),
+      key: eventsKey(),
     });
     events.push(...page.items);
     cursor = page.nextCursor;
@@ -291,7 +291,7 @@ export async function listAllEvents(): Promise<TunytEvent[]> {
 }
 
 export function getEventFresh(eventId: string) {
-  return call<TunytEvent>(`/partner/events/${encodeURIComponent(eventId)}`, { key: secretKey() });
+  return call<TunytEvent>(`/partner/events/${encodeURIComponent(eventId)}`, { key: eventsKey() });
 }
 
 export function listBookings(q: { eventId?: string; status?: string; cursor?: string; limit?: number }) {
