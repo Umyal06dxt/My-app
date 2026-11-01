@@ -1,9 +1,9 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createCheckoutSession, siteUrl, TunytError } from "@/lib/tunyt";
 import { MAX_PER_LINE } from "@/lib/tickets";
+import { rememberOrder } from "@/lib/orders";
 
 export type CheckoutState = { error: string | null };
 
@@ -64,14 +64,8 @@ export async function startCheckout(_prev: CheckoutState, form: FormData): Promi
     return { error: "Couldn't start checkout. Please try again." };
   }
 
-  // Remember which order this browser started, so /thanks can match the session to it.
-  (await cookies()).set("tunyt_order", orderId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 2,
-  });
+  // Remember which orders this browser started, so /thanks shows tickets only to the buyer.
+  await rememberOrder(orderId);
 
   redirect(url); // buyer signs in and pays on tunyt.com, then returns to /thanks
 }

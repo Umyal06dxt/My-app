@@ -115,7 +115,7 @@ async function call<T>(
       cache: "no-store",
     });
     const json = await res.json().catch(() => null);
-    if (res.ok) return json.data as T;
+    if (res.ok) return json?.data as T; // some endpoints (e.g. resend) may reply with no body
 
     const retryable = res.status === 429 || res.status >= 500 || json?.message === "request_in_progress";
     if (retryable && attempt < 1) {
@@ -210,4 +210,127 @@ export function getCheckoutSession(sessionId: string) {
   return call<CheckoutSession>(`/partner/checkout-sessions/${encodeURIComponent(sessionId)}`, {
     key: secretKey(),
   });
+}
+
+/* ---------- Bookings, tickets, refunds, balance (secret key, never cached) ---------- */
+
+export type BookingTicket = {
+  ticketId: string;
+  ticketTypeId: string;
+  status: string;
+  quantity: number;
+  pricePaise: number;
+  checkedIn: boolean;
+};
+
+export type Booking = {
+  bookingId: string;
+  eventId: string;
+  status: string;
+  paymentMode?: string;
+  currency: "INR";
+  subtotalPaise: number;
+  discountPaise: number;
+  platformFeePaise: number;
+  gatewayFeePaise: number;
+  gstPaise: number;
+  totalPaise: number;
+  feesBornBy: "HOST" | "USER";
+  buyer: { userId: string; name: string | null; email: string | null; phone: string | null } | null;
+  paymentStatus: string;
+  tickets: BookingTicket[];
+  createdAt: string;
+};
+
+export type TicketDetail = {
+  ticketId: string;
+  bookingId: string;
+  eventId: string;
+  ticketTypeId: string;
+  ticketTypeName: string;
+  status: string;
+  quantity: number;
+  pricePaise: number;
+  checkedIn: boolean;
+  qrCode: string | null;
+  holder?: { name?: string | null; email?: string | null; phone?: string | null } | null;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+};
+
+export type RefundResult = {
+  currency: "INR";
+  refunds: { refundId: string; ticketId: string; status: string; amountPaise: number }[];
+  failed: { ticketId: string; reason?: string; message?: string }[];
+};
+
+export type Balance = {
+  currency: "INR";
+  availablePaise: number;
+  earnedPaise: number;
+  inProcessPaise: number;
+  nextPayout: { amountPaise: number; date: string } | null;
+  byEvent: { eventId: string; title: string; earnedPaise: number; availablePaise: number; payoutDate: string | null }[];
+};
+
+/** Every event on the account, any status, newest first (for the admin page). */
+export async function listAllEvents(): Promise<TunytEvent[]> {
+  const events: TunytEvent[] = [];
+  let cursor: string | null = null;
+  do {
+    const qs = new URLSearchParams({ limit: "100" });
+    if (cursor) qs.set("cursor", cursor);
+    const page: { items: TunytEvent[]; nextCursor: string | null } = await call(`/partner/events?${qs}`, {
+      key: secretKey(),
+    });
+    events.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor && events.length < 500);
+  return events.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+}
+
+export function getEventFresh(eventId: string) {
+  return call<TunytEvent>(`/partner/events/${encodeURIComponent(eventId)}`, { key: secretKey() });
+}
+
+export function listBookings(q: { eventId?: string; status?: string; cursor?: string; limit?: number }) {
+  const qs = new URLSearchParams({ limit: String(q.limit ?? 25) });
+  if (q.eventId) qs.set("eventId", q.eventId);
+  if (q.status) qs.set("status", q.status);
+  if (q.cursor) qs.set("cursor", q.cursor);
+  return call<{ items: Booking[]; nextCursor: string | null }>(`/partner/bookings?${qs}`, { key: secretKey() });
+}
+
+export function getBooking(bookingId: string) {
+  return call<Booking>(`/partner/bookings/${encodeURIComponent(bookingId)}`, { key: secretKey() });
+}
+
+export function getTicket(ticketId: string) {
+  return call<TicketDetail>(`/partner/tickets/${encodeURIComponent(ticketId)}`, { key: secretKey() });
+}
+
+export function refundBooking(
+  bookingId: string,
+  body: { ticketIds?: string[]; reasonPreset?: string; additionalDetails?: string },
+  idempotencyKey: string,
+) {
+  return call<RefundResult>(`/partner/bookings/${encodeURIComponent(bookingId)}/refunds`, {
+    key: secretKey(),
+    method: "POST",
+    body,
+    idempotencyKey,
+  });
+}
+
+export function resendTicket(ticketId: string, idempotencyKey: string) {
+  return call<unknown>(`/partner/tickets/${encodeURIComponent(ticketId)}/resend`, {
+    key: secretKey(),
+    method: "POST",
+    idempotencyKey,
+  });
+}
+
+export function getBalance() {
+  return call<Balance>("/partner/balance", { key: secretKey() });
 }
