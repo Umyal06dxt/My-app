@@ -3,6 +3,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { getBooking, getCheckoutSession, getEvent, getTicket, TunytError, type CheckoutSession } from "@/lib/tunyt";
 import { myOrderIds } from "@/lib/orders";
+import { ClearSavedCheckout } from "./clear-checkout";
 import { qrImageSrc } from "@/lib/qr";
 import { eventDay, eventTime, rupees } from "@/lib/format";
 
@@ -49,6 +50,7 @@ async function Result({ searchParams }: Pick<PageProps<"/thanks">, "searchParams
     const ours = !!session.clientReference && orderIds.includes(session.clientReference);
     return (
       <div className="relative">
+        <ClearSavedCheckout sessionId={session.sessionId} />
         <Confetti />
         <Card
           emoji="🎉"
