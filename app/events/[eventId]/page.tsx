@@ -85,7 +85,7 @@ async function EventDetail({
         </div>
 
         <aside className="lg:sticky lg:top-28 lg:self-start">
-          <TicketPicker event={event} />
+          <TicketPicker event={event} apiBase={process.env.TUNYT_API_BASE ?? "https://api.tunyt.com/api/v1"} />
         </aside>
       </div>
     </article>
