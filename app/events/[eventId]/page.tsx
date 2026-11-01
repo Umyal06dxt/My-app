@@ -2,7 +2,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getEvent } from "@/lib/tunyt";
+import { getEvent, TunytError } from "@/lib/tunyt";
 import { eventDay, eventTime } from "@/lib/format";
 import { TicketPicker } from "./ticket-picker";
 
@@ -25,8 +25,22 @@ async function EventDetail({
 }: Pick<PageProps<"/events/[eventId]">, "params" | "searchParams">) {
   const { eventId } = await params;
   const { cancelled } = await searchParams;
-  const event = await getEvent(eventId);
-  if (!event || event.status !== "APPROVED") notFound();
+  let event;
+  try {
+    event = await getEvent(eventId);
+  } catch (e) {
+    console.error("[event page]", eventId, e);
+    return (
+      <div className="sticker mx-auto max-w-md rounded-[2rem] bg-pink-soft p-10 text-center hover:!transform-none">
+        <div className="float mb-3 text-6xl">🙈</div>
+        <h1 className="font-display text-2xl font-bold">we couldn&apos;t load this event</h1>
+        <p className="mt-2 font-semibold text-cocoa-soft">
+          {e instanceof TunytError ? `${e.message}${e.requestId ? ` (ref ${e.requestId})` : ""}` : "Please try again in a moment."}
+        </p>
+      </div>
+    );
+  }
+  if (!event) notFound();
 
   const img = event.banner?.horizontal || event.thumbnail || event.banner?.square;
   const tz = event.timezoneOffsetMinutes;

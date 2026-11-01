@@ -25,7 +25,10 @@ export function ticketBlocker(t: TicketType, now: number): string | null {
 
 /** Why the whole event can't be bought right now, or null if it can. */
 export function eventBlocker(e: TunytEvent, now: number): string | null {
-  if (!e.canBuy) return "Tickets aren't available for this event";
+  if (e.status && e.status !== "APPROVED") {
+    return e.status === "CANCELLED" ? "This event was cancelled" : "Tickets aren't on sale yet";
+  }
+  if (e.canBuy === false) return "Tickets aren't available for this event";
   if (e.salesPaused) return "Sales are paused right now";
   if (future(e.saleStartsAt, now)) return "Sales haven't opened yet";
   if (past(e.saleEndsAt, now)) return "Sales have ended";
