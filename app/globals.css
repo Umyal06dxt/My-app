@@ -1,26 +1,96 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --cream: #fff8f1;
+  --paper: #ffffff;
+  --cocoa: #3b2a3f;       /* text */
+  --cocoa-soft: #7d6a80;  /* secondary text */
+  --pink: #ff7eb3;
+  --pink-soft: #ffe1ee;
+  --lilac: #b89cff;
+  --lilac-soft: #ece4ff;
+  --butter: #ffd86b;
+  --butter-soft: #fff3c9;
+  --mint: #7fdcbc;
+  --mint-soft: #dcf7ec;
+  --sky: #8ccbff;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-cream: var(--cream);
+  --color-paper: var(--paper);
+  --color-cocoa: var(--cocoa);
+  --color-cocoa-soft: var(--cocoa-soft);
+  --color-pink: var(--pink);
+  --color-pink-soft: var(--pink-soft);
+  --color-lilac: var(--lilac);
+  --color-lilac-soft: var(--lilac-soft);
+  --color-butter: var(--butter);
+  --color-butter-soft: var(--butter-soft);
+  --color-mint: var(--mint);
+  --color-mint-soft: var(--mint-soft);
+  --color-sky: var(--sky);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+  --shadow-sticker: 4px 5px 0 0 var(--cocoa);
+  --shadow-sticker-lg: 6px 8px 0 0 var(--cocoa);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+html { color-scheme: light; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--cream);
+  background-image: radial-gradient(color-mix(in srgb, var(--pink) 22%, transparent) 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
+  color: var(--cocoa);
+  font-family: var(--font-body), ui-rounded, system-ui, sans-serif;
+}
+
+::selection { background: var(--pink); color: white; }
+
+/* sticker-style buttons and cards */
+.sticker {
+  border: 2.5px solid var(--cocoa);
+  box-shadow: var(--shadow-sticker);
+  transition: transform .18s cubic-bezier(.3,1.6,.6,1), box-shadow .18s ease;
+}
+.sticker:hover { transform: translate(-2px, -3px) rotate(-.6deg); box-shadow: var(--shadow-sticker-lg); }
+.sticker:active { transform: translate(2px, 3px); box-shadow: 1px 1px 0 0 var(--cocoa); }
+.sticker:disabled, .sticker[aria-disabled="true"] { transform: none; box-shadow: var(--shadow-sticker); opacity: .55; cursor: not-allowed; }
+
+.blob {
+  position: absolute; border-radius: 9999px; filter: blur(40px); opacity: .55; pointer-events: none;
+}
+
+.float { animation: float 5s ease-in-out infinite; }
+.float-slow { animation: float 7s ease-in-out infinite; }
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-10px) rotate(6deg); }
+}
+
+.wiggle:hover { animation: wiggle .5s ease-in-out; }
+@keyframes wiggle {
+  0%,100% { transform: rotate(0); } 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); }
+}
+
+.squiggle {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='10' viewBox='0 0 40 10'%3E%3Cpath d='M0 5 Q10 0 20 5 T40 5' fill='none' stroke='%23ff7eb3' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left bottom / 40px 10px;
+  padding-bottom: 10px;
+}
+
+.pop-in { animation: pop .5s cubic-bezier(.3,1.6,.6,1) both; }
+@keyframes pop { from { opacity: 0; transform: scale(.9) translateY(10px); } to { opacity: 1; transform: none; } }
+
+.confetti span {
+  position: absolute; top: -10px; width: 10px; height: 14px; border-radius: 3px;
+  animation: fall 3.2s linear infinite;
+}
+@keyframes fall {
+  to { transform: translateY(110vh) rotate(720deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float, .float-slow, .wiggle:hover, .pop-in, .confetti span { animation: none; }
+  .sticker, .sticker:hover { transition: none; transform: none; }
 }
