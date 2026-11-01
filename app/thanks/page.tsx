@@ -1,9 +1,10 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { getCheckoutSession, TunytError, type CheckoutSession } from "@/lib/tunyt";
-import { rupees } from "@/lib/format";
+import { getBooking, getCheckoutSession, getEvent, getTicket, TunytError, type CheckoutSession } from "@/lib/tunyt";
+import { myOrderIds } from "@/lib/orders";
+import { qrImageSrc } from "@/lib/qr";
+import { eventDay, eventTime, rupees } from "@/lib/format";
 
 export const metadata = { title: "Thank you!" };
 
@@ -21,7 +22,7 @@ async function Result({ searchParams }: Pick<PageProps<"/thanks">, "searchParams
   await connection(); // always ask Tunyt at request time
   const { session_id } = await searchParams;
   const sessionId = typeof session_id === "string" ? session_id : null;
-  const orderId = (await cookies()).get("tunyt_order")?.value;
+  const orderIds = await myOrderIds();
 
   if (!sessionId) {
     return <Card emoji="🤔" title="nothing to see here" tint="bg-butter-soft" body="This page shows up after checkout." />;
@@ -44,7 +45,8 @@ async function Result({ searchParams }: Pick<PageProps<"/thanks">, "searchParams
   }
 
   if (session.status === "PAID") {
-    const ours = !!orderId && session.clientReference === orderId;
+    // Tickets (with QR codes) are shown only in the browser that started this checkout.
+    const ours = !!session.clientReference && orderIds.includes(session.clientReference);
     return (
       <div className="relative">
         <Confetti />
@@ -62,6 +64,11 @@ async function Result({ searchParams }: Pick<PageProps<"/thanks">, "searchParams
             </dl>
           )}
         </Card>
+        {ours && session.bookingId && (
+          <Suspense fallback={<p className="mt-8 text-center font-bold text-cocoa-soft">loading your tickets… 🎟️</p>}>
+            <MyTickets bookingId={session.bookingId} eventId={session.eventId} />
+          </Suspense>
+        )}
       </div>
     );
   }
@@ -137,5 +144,88 @@ function Confetti() {
         />
       ))}
     </div>
+  );
+}
+
+const TICKET_TINTS = ["bg-pink-soft", "bg-lilac-soft", "bg-butter-soft", "bg-mint-soft"];
+
+async function MyTickets({ bookingId, eventId }: { bookingId: string; eventId: string }) {
+  let tickets;
+  let event = null;
+  try {
+    const [booking, ev] = await Promise.all([getBooking(bookingId), getEvent(eventId).catch(() => null)]);
+    event = ev;
+    const ok = booking.tickets.filter((t) => t.status.toUpperCase() === "SUCCESS");
+    tickets = await Promise.all(ok.map((t) => getTicket(t.ticketId)));
+  } catch (e) {
+    console.error("[thanks] tickets", e);
+    return (
+      <p className="mt-8 rounded-2xl bg-butter-soft p-4 text-center font-bold">
+        Your tickets are safe in your email and Tunyt account 💌 (we couldn&apos;t show them here right now)
+      </p>
+    );
+  }
+  if (tickets.length === 0) return null;
+
+  const withQr = await Promise.all(
+    tickets.map(async (t) => ({ ...t, qrSrc: t.qrCode ? await qrImageSrc(t.qrCode).catch(() => null) : null })),
+  );
+
+  return (
+    <section className="mt-10">
+      <h2 className="mb-5 text-center font-display text-3xl font-bold">your tickets 🎟️</h2>
+      <div className="flex flex-col gap-6">
+        {withQr.map((t, i) => (
+          <article
+            key={t.ticketId}
+            className={`sticker pop-in relative overflow-hidden rounded-[2rem] hover:!transform-none ${TICKET_TINTS[i % 4]}`}
+            style={{ animationDelay: `${i * 120}ms` }}
+          >
+            <div className="p-6 pb-5">
+              <p className="text-xs font-extrabold uppercase tracking-widest text-cocoa-soft">
+                ticket {i + 1} of {withQr.length}
+              </p>
+              <h3 className="mt-1 font-display text-2xl font-bold leading-tight">{event?.title ?? "Your event"}</h3>
+              {event && (
+                <p className="mt-1 text-sm font-bold text-cocoa-soft">
+                  📅 {eventDay(event.time, event.timezoneOffsetMinutes)} · 🕗 {eventTime(event.time, event.timezoneOffsetMinutes)}
+                  <br />📍 {event.location}
+                </p>
+              )}
+              <p className="mt-3 inline-block rounded-full border-2 border-cocoa bg-paper px-3 py-1 text-sm font-extrabold">
+                {t.quantity}× {t.ticketTypeName}
+              </p>
+            </div>
+
+            {/* perforation */}
+            <div className="relative border-t-[3px] border-dashed border-cocoa/30">
+              <span className="absolute -left-4 -top-4 h-8 w-8 rounded-full border-2 border-cocoa bg-cream" />
+              <span className="absolute -right-4 -top-4 h-8 w-8 rounded-full border-2 border-cocoa bg-cream" />
+            </div>
+
+            <div className="flex flex-col items-center gap-2 p-6">
+              {t.qrSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={t.qrSrc}
+                  alt={`QR code for ticket ${i + 1}`}
+                  width={208}
+                  height={208}
+                  className="h-52 w-52 rounded-2xl border-2 border-cocoa bg-paper p-2"
+                />
+              ) : (
+                <p className="rounded-2xl bg-paper p-4 text-sm font-bold">QR code is in your email 💌</p>
+              )}
+              <p className="text-xs font-semibold text-cocoa-soft">
+                {t.checkedIn ? "✅ already checked in" : "show this at the door"} · {t.ticketId.slice(0, 8)}
+              </p>
+            </div>
+          </article>
+        ))}
+      </div>
+      <p className="mt-6 text-center text-sm font-semibold text-cocoa-soft">
+        tip: take a screenshot 📸 · this page keeps working in this browser for 30 days
+      </p>
+    </section>
   );
 }
