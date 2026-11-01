@@ -1,7 +1,9 @@
 "use client";
 
-import { useActionState, useState, useSyncExternalStore } from "react";
-import { startCheckout, type CheckoutState } from "@/app/actions";
+import { useActionState, useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { cancelCheckout, startCheckout } from "@/app/actions";
+import { checkoutStore, parseCheckout, sameItems, useSavedCheckoutRaw } from "@/lib/checkout-store";
+import { Countdown } from "./countdown";
 import type { TunytEvent } from "@/lib/tunyt";
 import { rupees } from "@/lib/format";
 import { CheckoutPanel } from "./checkout-panel";
@@ -19,10 +21,66 @@ const serverSnapshot = () => null;
 
 export function TicketPicker({ event }: { event: TunytEvent }) {
   const now = useSyncExternalStore(subscribe, nowSnapshot, serverSnapshot);
-  const [qty, setQty] = useState<Record<string, number>>({});
-  const [state, action, pending] = useActionState<CheckoutState, FormData>(startCheckout, { error: null });
-  // Each new session (nonce) opens the on-site checkout panel until the buyer closes it.
-  const [closedNonce, setClosedNonce] = useState<string | null>(null);
+  const raw = useSavedCheckoutRaw();
+  const saved = useMemo(() => {
+    const c = parseCheckout(raw);
+    return c && c.eventId === event.eventId ? c : null;
+  }, [raw, event.eventId]);
+
+  // Quantities: what the buyer picked, or (after a reload) the ones in their saved checkout.
+  const [picked, setQty] = useState<Record<string, number> | null>(null);
+  const qty = picked ?? Object.fromEntries((saved?.items ?? []).map((i) => [i.ticketTypeId, i.quantity]));
+  const [gone, setGone] = useState<string | null>(null);
+
+  const [state, action, pending] = useActionState<{ error: string | null }, FormData>(async (_prev, form) => {
+    setGone(null);
+    const items = [...form.entries()]
+      .filter(([k]) => k.startsWith("qty:"))
+      .map(([k, v]) => ({ ticketTypeId: k.slice(4), quantity: Number(v) }))
+      .filter((i) => i.quantity > 0);
+
+    // Same tickets as the saved checkout: just reopen it (same session, same login).
+    const current = checkoutStore.current();
+    if (current && current.eventId === event.eventId && sameItems(current.items, items)) {
+      checkoutStore.update({ open: true });
+      return { error: null };
+    }
+    // Different tickets: cancel the old session and start a new one.
+    if (current) {
+      checkoutStore.clear();
+      void cancelCheckout(current.sessionId);
+    }
+
+    const r = await startCheckout({ error: null }, form);
+    if (r.session) {
+      checkoutStore.save({
+        eventId: event.eventId,
+        sessionId: r.session.sessionId,
+        url: r.session.url,
+        amountPaise: r.session.amountPaise,
+        expiresAt: r.session.expiresAt,
+        items,
+        open: true,
+        step: "identify",
+      });
+    }
+    return { error: r.error };
+  }, { error: null });
+
+  const hide = useCallback(() => checkoutStore.update({ open: false }), []);
+  const onGone = useCallback((message: string) => {
+    checkoutStore.clear();
+    setGone(message);
+  }, []);
+  const timedOut = useCallback(
+    () => onGone("Your checkout timed out after 30 minutes. Pick your tickets again 🌷"),
+    [onGone],
+  );
+  const startOver = () => {
+    if (saved) void cancelCheckout(saved.sessionId);
+    checkoutStore.clear();
+    setQty({});
+  };
 
   const types = event.ticketTypes ?? [];
   const blocked = now == null ? null : eventBlocker(event, now);
@@ -43,17 +101,37 @@ export function TicketPicker({ event }: { event: TunytEvent }) {
   const buyerFees = lines.some((l) => l.n > 0 && l.t.feeBornBy === "USER" && l.price > 0);
 
   const set = (id: string, n: number, max: number) =>
-    setQty((q) => ({ ...q, [id]: Math.max(0, Math.min(max, n)) }));
+    setQty({ ...qty, [id]: Math.max(0, Math.min(max, n)) });
 
   return (
     <>
-    {state.session && closedNonce !== state.session.nonce && (
-      <CheckoutPanel session={state.session} onClose={() => setClosedNonce(state.session!.nonce)} />
-    )}
+    {saved?.open && <CheckoutPanel key={saved.sessionId} checkout={saved} onClose={hide} onGone={onGone} />}
     <form action={action} className="sticker rounded-[2rem] bg-paper p-6 hover:!transform-none">
       <input type="hidden" name="eventId" value={event.eventId} />
       <h2 className="mb-1 font-display text-2xl font-semibold">pick your tickets 🎟️</h2>
       <p className="mb-5 text-sm font-semibold text-cocoa-soft">choose how many, then off to checkout!</p>
+
+      {saved && !saved.open && (
+        <div className="pop-in mb-5 rounded-2xl border-2 border-cocoa bg-mint-soft p-4">
+          <p className="font-display text-lg font-semibold">your checkout is waiting 🧺</p>
+          <p className="text-sm font-bold text-cocoa-soft">
+            {rupees(saved.amountPaise)} · ⏳ <Countdown to={saved.expiresAt} onDone={timedOut} />
+          </p>
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => checkoutStore.update({ open: true })}
+              className="sticker whitespace-nowrap rounded-full bg-pink px-5 py-2 font-display font-semibold text-white"
+            >
+              continue checkout 💖
+            </button>
+            <button type="button" onClick={startOver} className="whitespace-nowrap text-sm font-bold text-cocoa-soft hover:text-pink">
+              start over
+            </button>
+          </div>
+        </div>
+      )}
+      {gone && <p role="status" className="mb-5 rounded-2xl bg-butter-soft p-3 text-sm font-bold">{gone}</p>}
 
       {blocked ? (
         <p className="rounded-2xl bg-butter-soft p-4 text-center font-bold">{blocked} 🌙</p>
@@ -120,7 +198,13 @@ export function TicketPicker({ event }: { event: TunytEvent }) {
             disabled={count === 0 || pending}
             className="sticker mt-5 w-full rounded-full bg-pink px-6 py-4 font-display text-lg font-semibold text-white"
           >
-            {pending ? "getting your tickets ready… 💫" : count === 0 ? "pick a ticket above ☝️" : "checkout 💖"}
+            {pending
+              ? "getting your tickets ready… 💫"
+              : count === 0
+                ? "pick a ticket above ☝️"
+                : saved && sameItems(saved.items, lines.filter((l) => l.n > 0).map((l) => ({ ticketTypeId: l.t.ticketTypeId, quantity: l.n })))
+                  ? "continue checkout 💖"
+                  : "checkout 💖"}
           </button>
           <p className="mt-3 text-center text-xs font-semibold text-cocoa-soft">
             🔒 sign in with a quick code &amp; pay right here (UPI, cards &amp; more), secured by Tunyt

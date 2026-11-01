@@ -356,3 +356,11 @@ export async function embeddedCheckout<T>(sessionId: string, path: "/otp/request
     json?.issues?.[0]?.message ?? json?.errors?.[0]?.message ?? json?.message ?? `HTTP ${res.status}`;
   throw new TunytError(message, res.status, json?.requestId, json?.issues);
 }
+
+export function expireCheckoutSession(sessionId: string) {
+  return call<CheckoutSession>(`/partner/checkout-sessions/${encodeURIComponent(sessionId)}/expire`, {
+    key: secretKey(),
+    method: "POST",
+    idempotencyKey: `expire-${sessionId}`,
+  });
+}
