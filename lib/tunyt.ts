@@ -162,9 +162,20 @@ export async function getEvent(eventId: string): Promise<TunytEvent | null> {
   cacheTag("events", `event-${eventId}`);
 
   try {
-    return await call<TunytEvent>(`/partner/events/${encodeURIComponent(eventId)}`, { key: eventsKey() });
+    const data = await call<TunytEvent | { event: TunytEvent; ticketTypes?: TicketType[] }>(
+      `/partner/events/${encodeURIComponent(eventId)}`,
+      { key: eventsKey() },
+    );
+    // Accept both { ...event, ticketTypes } and { event, ticketTypes } shapes.
+    if (data && "event" in data && data.event) {
+      return { ...data.event, ticketTypes: data.event.ticketTypes ?? data.ticketTypes ?? [] };
+    }
+    return data as TunytEvent;
   } catch (e) {
-    if (e instanceof TunytError && e.status === 404) return null;
+    if (e instanceof TunytError && e.status === 404) {
+      console.warn("[tunyt] event not found for this key:", eventId, e.requestId);
+      return null;
+    }
     throw e;
   }
 }
