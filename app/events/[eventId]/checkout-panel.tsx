@@ -4,14 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { rupees } from "@/lib/format";
+import { checkoutStore, type SavedCheckout } from "@/lib/checkout-store";
+import { checkoutStatus } from "@/app/actions";
+import { requestOtp, verifyOtp } from "./otp-actions";
+import { Countdown } from "./countdown";
 
 type Props = {
-  apiBase: string;
-  session: { sessionId: string; url: string; amountPaise: number };
+  checkout: SavedCheckout;
+  /** Hide the pop-up. The checkout stays saved and can be resumed. */
   onClose: () => void;
+  /** The session can no longer be paid (timed out or cancelled). */
+  onGone: (message: string) => void;
 };
-
-type Step = "identify" | "code" | "pay";
 
 /** Turns "98765 43210" into "+919876543210"; emails pass through. */
 function normalise(raw: string) {
@@ -27,35 +31,38 @@ function looksValid(id: string) {
   return id.includes("@") ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id) : /^\+\d{8,15}$/.test(id);
 }
 
-export function CheckoutPanel({ apiBase, session, onClose }: Props) {
-  const [step, setStep] = useState<Step>("identify");
-  const [identifier, setIdentifier] = useState("");
+export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
+  const { sessionId, url, amountPaise, expiresAt, step, token, buyerName } = checkout;
+  const [identifier, setIdentifier] = useState(checkout.identifier ?? "");
   const [otp, setOtp] = useState("");
-  const [token, setToken] = useState<string | null>(null);
-  const [buyerName, setBuyerName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(
+    step === "code" && checkout.identifier ? `We sent a code to ${checkout.identifier} 💌` : null,
+  );
   const [cooldown, setCooldown] = useState(0);
   const dialog = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  const tunytOrigin = new URL(session.url).origin; // e.g. https://www.tunyt.com
-  const base = `${apiBase}/embedded-checkout/${encodeURIComponent(session.sessionId)}`;
+  const tunytOrigin = new URL(url).origin; // e.g. https://www.tunyt.com
+  const thanks = `/thanks?session_id=${encodeURIComponent(sessionId)}`;
 
-  async function post(path: string, body: unknown) {
-    const r = await fetch(base + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+  // When the pop-up (re)opens, make sure the session is still payable.
+  useEffect(() => {
+    let alive = true;
+    checkoutStatus(sessionId).then((status) => {
+      if (!alive) return;
+      if (status === "PAID") {
+        checkoutStore.clear();
+        router.push(thanks);
+      } else if (status !== "OPEN") {
+        onGone("That checkout timed out. Pick your tickets again and you're good to go 🌷");
+      }
     });
-    const json = await r.json().catch(() => null);
-    if (!r.ok || json?.status === "error") {
-      const msg = json?.issues?.[0]?.message ?? json?.errors?.[0]?.message ?? json?.message ?? `Error ${r.status}`;
-      throw new Error(msg);
-    }
-    return json?.data ?? {};
-  }
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, thanks, router, onGone]);
 
   async function sendCode(e?: React.FormEvent) {
     e?.preventDefault();
@@ -64,11 +71,13 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await post("/otp/request", { identifier: id });
+      // Sent from our server (no browser CORS); Tunyt checks it comes from this site's origin.
+      const r = await requestOtp(sessionId, id);
+      if (!r.ok) throw new Error(r.message);
       setIdentifier(id);
-      setStep("code");
       setNote(`We sent a code to ${id} 💌`);
       setCooldown(30);
+      checkoutStore.update({ step: "code", identifier: id });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -82,13 +91,11 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const data = await post("/otp/verify", { identifier, otp: otp.trim() });
-      if (!data.checkoutToken) throw new Error("Couldn't sign you in. Please try again.");
-      const buyer = data.buyer ?? data.user ?? data;
-      setBuyerName(buyer?.name || buyer?.firstName || null);
-      setToken(data.checkoutToken);
-      setStep("pay");
+      const r = await verifyOtp(sessionId, identifier, otp.trim());
+      if (!r.ok) throw new Error(r.message);
       setNote(null);
+      // Saved, so closing the pop-up or reloading goes straight back to the payment step.
+      checkoutStore.update({ step: "pay", token: r.checkoutToken, buyerName: r.buyerName ?? null });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -110,7 +117,8 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
       if (e.data?.source !== "tunyt-checkout") return;
       if (e.data.type === "paid") {
         setNote("Payment received! Getting your tickets… 🎉");
-        router.push(`/thanks?session_id=${encodeURIComponent(session.sessionId)}`);
+        checkoutStore.clear();
+        router.push(thanks);
       } else if (e.data.type === "dismissed") {
         setNote("Payment window closed. Tap Pay again whenever you're ready 🌷");
       } else if (e.data.type === "error") {
@@ -119,9 +127,9 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [tunytOrigin, session.sessionId, router]);
+  }, [tunytOrigin, thanks, router]);
 
-  // Escape closes, focus moves into the dialog, page behind doesn't scroll.
+  // Escape hides the pop-up, focus moves into it, page behind doesn't scroll.
   useEffect(() => {
     dialog.current?.querySelector<HTMLElement>("input,button")?.focus();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -150,7 +158,7 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close checkout"
+          aria-label="Hide checkout (you can come back to it)"
           className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full bg-pink-soft font-bold hover:bg-pink hover:text-white"
         >
           ✕
@@ -162,7 +170,12 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
           ))}
         </div>
 
-        <p className="text-xs font-extrabold uppercase tracking-widest text-cocoa-soft">total {rupees(session.amountPaise)}</p>
+        <p className="flex justify-between text-xs font-extrabold uppercase tracking-widest text-cocoa-soft">
+          <span>total {rupees(amountPaise)}</span>
+          <span>
+            ⏳ <Countdown to={expiresAt} />
+          </span>
+        </p>
 
         {step === "identify" && (
           <form onSubmit={sendCode} className="mt-1 flex flex-col gap-3">
@@ -200,7 +213,16 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
               {busy ? "checking… 💫" : "continue 💖"}
             </button>
             <div className="flex justify-between text-sm font-bold text-cocoa-soft">
-              <button type="button" onClick={() => { setStep("identify"); setOtp(""); setNote(null); setError(null); }} className="hover:text-pink">
+              <button
+                type="button"
+                onClick={() => {
+                  setOtp("");
+                  setNote(null);
+                  setError(null);
+                  checkoutStore.update({ step: "identify" });
+                }}
+                className="hover:text-pink"
+              >
                 ← change
               </button>
               <button type="button" disabled={cooldown > 0 || busy} onClick={() => sendCode()} className="hover:text-pink disabled:opacity-50">
@@ -219,7 +241,7 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
             <div className="overflow-hidden rounded-2xl border-2 border-cocoa bg-cream">
               <iframe
                 title="Secure payment by Tunyt"
-                src={`${tunytOrigin}/embed/checkout/${encodeURIComponent(session.sessionId)}#t=${encodeURIComponent(token)}`}
+                src={`${tunytOrigin}/embed/checkout/${encodeURIComponent(sessionId)}#t=${encodeURIComponent(token)}`}
                 className="block h-[280px] w-full border-0"
                 allow="payment"
               />
@@ -232,7 +254,7 @@ export function CheckoutPanel({ apiBase, session, onClose }: Props) {
 
         <p className="mt-5 text-center text-xs font-semibold text-cocoa-soft">
           🔒 secured by Tunyt ·{" "}
-          <a href={session.url} className="underline decoration-pink decoration-wavy underline-offset-2 hover:text-pink">
+          <a href={url} className="underline decoration-pink decoration-wavy underline-offset-2 hover:text-pink">
             pay on tunyt.com instead
           </a>
         </p>

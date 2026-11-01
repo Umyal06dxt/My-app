@@ -1,14 +1,20 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { createCheckoutSession, siteUrl, TunytError } from "@/lib/tunyt";
+import {
+  createCheckoutSession,
+  expireCheckoutSession,
+  getCheckoutSession,
+  siteUrl,
+  TunytError,
+} from "@/lib/tunyt";
 import { MAX_PER_LINE } from "@/lib/tickets";
-import { rememberOrder } from "@/lib/orders";
+import { myOrderIds, rememberOrder } from "@/lib/orders";
 
 export type CheckoutState = {
   error: string | null;
   /** Set once a session exists: the page then runs the on-site login + payment frame. */
-  session?: { sessionId: string; url: string; amountPaise: number; nonce: string };
+  session?: { sessionId: string; url: string; amountPaise: number; expiresAt: string; nonce: string };
 };
 
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
@@ -74,6 +80,37 @@ export async function startCheckout(_prev: CheckoutState, form: FormData): Promi
   if (process.env.CHECKOUT_MODE === "hosted") redirect(session.url);
   return {
     error: null,
-    session: { sessionId: session.sessionId, url: session.url, amountPaise: session.amountPaise, nonce: orderId },
+    session: {
+      sessionId: session.sessionId,
+      url: session.url,
+      amountPaise: session.amountPaise,
+      expiresAt: session.expiresAt,
+      nonce: orderId,
+    },
   };
+}
+
+/** Status of a checkout this browser started (used when resuming). Others read as gone. */
+export async function checkoutStatus(sessionId: string): Promise<"OPEN" | "PAID" | "EXPIRED" | "GONE"> {
+  if (!ID.test(sessionId)) return "GONE";
+  try {
+    const s = await getCheckoutSession(sessionId);
+    if (!s.clientReference || !(await myOrderIds()).includes(s.clientReference)) return "GONE";
+    return s.status;
+  } catch (e) {
+    if (e instanceof TunytError && e.status === 404) return "GONE";
+    return "OPEN"; // network hiccup: let the buyer carry on, Tunyt still guards the payment
+  }
+}
+
+/** Cancel an open checkout this browser started (when the buyer starts over). */
+export async function cancelCheckout(sessionId: string): Promise<void> {
+  if (!ID.test(sessionId)) return;
+  try {
+    const s = await getCheckoutSession(sessionId);
+    if (s.status !== "OPEN" || !s.clientReference || !(await myOrderIds()).includes(s.clientReference)) return;
+    await expireCheckoutSession(sessionId);
+  } catch (e) {
+    console.error("[checkout] cancel", sessionId, e);
+  }
 }
