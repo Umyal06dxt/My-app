@@ -151,7 +151,8 @@ export async function getLiveEvents(): Promise<TunytEvent[]> {
 
   const now = Date.now();
   return events
-    .filter((e) => e.status === "APPROVED" && e.visibility !== "PRIVATE")
+    .filter((e) => !e.status || String(e.status).toUpperCase() === "APPROVED")
+    .filter((e) => String(e.visibility ?? "").toUpperCase() !== "PRIVATE")
     .filter((e) => new Date(e.endsAt ?? e.time).getTime() > now)
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 }
@@ -170,7 +171,9 @@ export async function getEvent(eventId: string): Promise<TunytEvent | null> {
     if (data && "event" in data && data.event) {
       return { ...data.event, ticketTypes: data.event.ticketTypes ?? data.ticketTypes ?? [] };
     }
-    return data as TunytEvent;
+    const event = data as TunytEvent;
+    console.log("[tunyt] event", eventId, "status:", event.status, "canBuy:", event.canBuy, "salesPaused:", event.salesPaused);
+    return event;
   } catch (e) {
     if (e instanceof TunytError && e.status === 404) {
       console.warn("[tunyt] event not found for this key:", eventId, e.requestId);
