@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Little Live 🎀
 
-## Getting Started
+A cute little website that shows your live Tunyt events and sells tickets through the
+[Tunyt Host API](https://www.tunyt.com/docs/host-api). Built with Next.js 16.
 
-First, run the development server:
+- **Home** (`/`): every approved event that hasn't ended, soonest first.
+- **Event page** (`/events/[eventId]`): details, plus a ticket picker with counters, early-bird prices and "only N left".
+- **Checkout**: the server creates a Tunyt checkout session and sends the buyer to Tunyt to sign in and pay
+  (UPI, cards and more). Tunyt then sends them back here.
+- **Thank you** (`/thanks`): asks Tunyt whether the session is really `PAID` (the redirect alone proves nothing) and shows confetti 🎉.
+- **Webhook** (`/api/tunyt/webhook`): optional. Checks the signature of each Tunyt event and logs it.
+
+Tunyt emails the tickets with their QR codes, so this site doesn't need a database.
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env.local   # then fill it in
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Variable | What it is |
+| --- | --- |
+| `SITE_URL` | Your site's public `https://` address, e.g. `https://shop.example.com`. Must be in the secret key's `allowedOrigins`. |
+| `SITE_NAME` | The name shown in the header (default "Little Live"). |
+| `TUNYT_SECRET_KEY` | `sk_live_...` with `checkout:write`. Server only. Never commit it. |
+| `TUNYT_EVENTS_KEY` | A key with `events:read` for listing events: a `pk_live_...` key whose `allowedOrigins` include `SITE_URL`, or a secret key with `events:read`. Leave it empty if `TUNYT_SECRET_KEY` already has `events:read`. |
+| `TUNYT_WEBHOOK_SECRET` | Optional `whsec_...` from registering `SITE_URL/api/tunyt/webhook`. |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Your keys
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+A secret key with only `checkout:write`, `bookings:read` and `refunds:write` **can't list events**.
+Add one of these:
 
-## Learn More
+- **Publishable key (simplest):** create a `PUBLISHABLE` / `LIVE` key with `allowedOrigins: ["<your SITE_URL>"]`
+  and put it in `TUNYT_EVENTS_KEY`.
+- **Or** create a new secret key with `events:read` and `checkout:write` (you can have 2 active secret keys per mode).
 
-To learn more about Next.js, take a look at the following resources:
+Return URLs must be `https` and on an origin in the secret key's `allowedOrigins`. For local testing,
+use a tunnel (e.g. `cloudflared` or `ngrok`) and set `SITE_URL` to the tunnel address.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Going live
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Only `APPROVED`, general-admission events with ticketing turned on can be sold. Do one real purchase with a
+free or cheap ticket, then refund it, before you share the site.
