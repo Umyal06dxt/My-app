@@ -41,7 +41,21 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
     step === "code" && checkout.identifier ? `We sent a code to ${checkout.identifier} 💌` : null,
   );
   const [cooldown, setCooldown] = useState(0);
-  const [frameHeight, setFrameHeight] = useState(330);
+  // Height the frame reports (if Tunyt sends it); otherwise fill the space the screen has.
+  const [reportedHeight, setReportedHeight] = useState<number | null>(null);
+  const [screenHeight, setScreenHeight] = useState(800);
+  useEffect(() => {
+    const measure = () => setScreenHeight(window.innerHeight);
+    const first = setTimeout(measure, 0);
+    window.addEventListener("resize", measure);
+    return () => {
+      clearTimeout(first);
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  // ~300px of the pop-up (92vh max) is header, summary and footer; the frame gets the rest.
+  const fitHeight = Math.max(360, Math.min(640, Math.floor(screenHeight * 0.92) - 300));
+  const frameHeight = reportedHeight ?? fitHeight;
   const [frameLoaded, setFrameLoaded] = useState(false);
   const [paying, setPaying] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
@@ -134,7 +148,11 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
       }
       const type = String(data?.type ?? data?.event ?? data?.status ?? "").toLowerCase();
       if (process.env.NODE_ENV !== "production") console.debug("[checkout] frame message", e.origin, e.data);
-      if (typeof data?.height === "number" && data.height > 120 && data.height < 1200) setFrameHeight(data.height);
+      // Size messages in any of the usual shapes: {height}, {data:{height}}, {payload:{height}}, {type:"resize", value}.
+      const h = [data?.height, data?.data?.height, data?.payload?.height, /height|resize/.test(type) ? data?.value : undefined]
+        .map(Number)
+        .find((n) => Number.isFinite(n) && n > 120 && n < 2000);
+      if (h) setReportedHeight(Math.ceil(h) + 4);
       if (type.includes("paid") || type.includes("success") || type.includes("complete")) {
         setPaying(true);
         goToTickets();
@@ -275,25 +293,18 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
         )}
 
         {step === "pay" && token && (
-          <div className="mt-1 flex flex-col gap-4">
-            <h2 id="checkout-title" className="font-display text-2xl font-bold">
+          <div className="mt-1 flex flex-col gap-3">
+            <h2 id="checkout-title" className="font-display text-xl font-bold">
               {buyerName ? `hi ${buyerName.split(" ")[0]}! ` : "almost there! "}🎟️
             </h2>
 
-            {/* order summary */}
-            <div className="rounded-2xl bg-pink-soft p-4">
-              {eventTitle && <p className="font-display text-lg font-semibold leading-tight">{eventTitle}</p>}
-              <ul className="mt-1 text-sm font-bold text-cocoa-soft">
-                {(lines ?? []).map((l) => (
-                  <li key={l.name}>
-                    {l.quantity}× {l.name}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-3 flex items-end justify-between border-t-2 border-dashed border-cocoa/20 pt-3">
-                <span className="text-sm font-bold">to pay</span>
-                <span className="font-display text-2xl font-bold">{rupees(amountPaise)}</span>
-              </div>
+            {/* order summary, one line so the payment buttons get the room */}
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-pink-soft px-4 py-2.5">
+              <p className="min-w-0 truncate text-sm font-bold">
+                {(lines ?? []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
+                {eventTitle && <span className="text-cocoa-soft"> · {eventTitle}</span>}
+              </p>
+              <span className="shrink-0 font-display text-xl font-bold">{rupees(amountPaise)}</span>
             </div>
 
             {/* Tunyt's secure payment frame */}
@@ -305,6 +316,7 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
               )}
               <iframe
                 title="Secure payment by Tunyt"
+                scrolling="auto"
                 src={`${tunytOrigin}/embed/checkout/${encodeURIComponent(sessionId)}#t=${encodeURIComponent(token)}`}
                 onLoad={() => setFrameLoaded(true)}
                 style={{ height: frameHeight }}
