@@ -13,6 +13,9 @@ export type SavedCheckout = {
   amountPaise: number;
   expiresAt: string;
   items: { ticketTypeId: string; quantity: number }[];
+  /** For the order summary in the pop-up. */
+  eventTitle?: string;
+  lines?: { name: string; quantity: number }[];
   open: boolean;
   step: "identify" | "code" | "pay";
   identifier?: string;

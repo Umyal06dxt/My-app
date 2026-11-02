@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { rupees } from "@/lib/format";
@@ -32,7 +32,7 @@ function looksValid(id: string) {
 }
 
 export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
-  const { sessionId, url, amountPaise, expiresAt, step, token, buyerName } = checkout;
+  const { sessionId, url, amountPaise, expiresAt, step, token, buyerName, eventTitle, lines } = checkout;
   const [identifier, setIdentifier] = useState(checkout.identifier ?? "");
   const [otp, setOtp] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,6 +41,9 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
     step === "code" && checkout.identifier ? `We sent a code to ${checkout.identifier} 💌` : null,
   );
   const [cooldown, setCooldown] = useState(0);
+  const [frameHeight, setFrameHeight] = useState(330);
+  const [frameLoaded, setFrameLoaded] = useState(false);
+  const [paying, setPaying] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -110,24 +113,63 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
     return () => clearTimeout(t);
   }, [cooldown]);
 
+  const goToTickets = useCallback(() => {
+    checkoutStore.clear();
+    router.push(thanks);
+  }, [router, thanks]);
+
   // The payment frame tells us how it went. "paid" is only a hint: /thanks double-checks with Tunyt.
   useEffect(() => {
+    const fromTunyt = (origin: string) =>
+      origin === tunytOrigin || /^https:\/\/([a-z0-9-]+\.)*tunyt\.com$/.test(origin);
     function onMessage(e: MessageEvent) {
-      if (e.origin !== tunytOrigin) return;
-      if (e.data?.source !== "tunyt-checkout") return;
-      if (e.data.type === "paid") {
-        setNote("Payment received! Getting your tickets… 🎉");
-        checkoutStore.clear();
-        router.push(thanks);
-      } else if (e.data.type === "dismissed") {
+      if (!fromTunyt(e.origin)) return;
+      let data = e.data;
+      if (typeof data === "string") {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          data = { type: data };
+        }
+      }
+      const type = String(data?.type ?? data?.event ?? data?.status ?? "").toLowerCase();
+      if (process.env.NODE_ENV !== "production") console.debug("[checkout] frame message", e.origin, e.data);
+      if (typeof data?.height === "number" && data.height > 120 && data.height < 1200) setFrameHeight(data.height);
+      if (type.includes("paid") || type.includes("success") || type.includes("complete")) {
+        setPaying(true);
+        goToTickets();
+      } else if (type.includes("dismiss") || type.includes("close") || type.includes("cancel")) {
         setNote("Payment window closed. Tap Pay again whenever you're ready 🌷");
-      } else if (e.data.type === "error") {
+      } else if (type.includes("error") || type.includes("fail")) {
         setError("The payment couldn't start here. You can finish on Tunyt instead (link below).");
       }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [tunytOrigin, thanks, router]);
+  }, [tunytOrigin, goToTickets]);
+
+  // Don't rely on the frame's message alone: while paying, ask our server every few seconds.
+  useEffect(() => {
+    if (step !== "pay") return;
+    let alive = true;
+    const check = async () => {
+      const status = await checkoutStatus(sessionId).catch(() => "OPEN" as const);
+      if (!alive) return;
+      if (status === "PAID") {
+        setPaying(true);
+        goToTickets();
+      } else if (status === "EXPIRED" || status === "GONE") {
+        onGone("That checkout timed out. Pick your tickets again and you're good to go 🌷");
+      }
+    };
+    const id = setInterval(check, 3000);
+    window.addEventListener("focus", check);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      window.removeEventListener("focus", check);
+    };
+  }, [step, sessionId, goToTickets, onGone]);
 
   // Escape hides the pop-up, focus moves into it, page behind doesn't scroll.
   useEffect(() => {
@@ -171,7 +213,7 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
         </div>
 
         <p className="flex justify-between text-xs font-extrabold uppercase tracking-widest text-cocoa-soft">
-          <span>total {rupees(amountPaise)}</span>
+          <span>{step === "pay" ? "secure checkout" : `total ${rupees(amountPaise)}`}</span>
           <span>
             ⏳ <Countdown to={expiresAt} />
           </span>
@@ -233,27 +275,47 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
         )}
 
         {step === "pay" && token && (
-          <div className="mt-1 flex flex-col gap-3">
+          <div className="mt-1 flex flex-col gap-4">
             <h2 id="checkout-title" className="font-display text-2xl font-bold">
               {buyerName ? `hi ${buyerName.split(" ")[0]}! ` : "almost there! "}🎟️
             </h2>
-            <p className="text-sm font-semibold text-cocoa-soft">Pay securely with UPI, cards and more.</p>
-            <div className="overflow-hidden rounded-2xl border-2 border-cocoa bg-cream">
+
+            {/* order summary */}
+            <div className="rounded-2xl bg-pink-soft p-4">
+              {eventTitle && <p className="font-display text-lg font-semibold leading-tight">{eventTitle}</p>}
+              <ul className="mt-1 text-sm font-bold text-cocoa-soft">
+                {(lines ?? []).map((l) => (
+                  <li key={l.name}>
+                    {l.quantity}× {l.name}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex items-end justify-between border-t-2 border-dashed border-cocoa/20 pt-3">
+                <span className="text-sm font-bold">to pay</span>
+                <span className="font-display text-2xl font-bold">{rupees(amountPaise)}</span>
+              </div>
+            </div>
+
+            {/* Tunyt's secure payment frame */}
+            <div className="relative overflow-hidden rounded-2xl bg-white shadow-[0_0_0_2px_var(--cocoa)]">
+              {!frameLoaded && (
+                <div className="absolute inset-0 grid place-items-center bg-paper">
+                  <p className="animate-pulse font-display font-semibold text-cocoa-soft">opening secure payment… 🔒</p>
+                </div>
+              )}
               <iframe
                 title="Secure payment by Tunyt"
                 src={`${tunytOrigin}/embed/checkout/${encodeURIComponent(sessionId)}#t=${encodeURIComponent(token)}`}
-                className="block h-[280px] w-full border-0"
+                onLoad={() => setFrameLoaded(true)}
+                style={{ height: frameHeight }}
+                className="block w-full border-0 bg-white"
                 allow="payment"
               />
             </div>
-            <a
-              href={url}
-              className="sticker block rounded-full bg-lilac px-5 py-3 text-center font-display font-semibold text-cocoa"
-            >
-              trouble paying? continue on Tunyt →
-            </a>
-            <p className="text-center text-xs font-semibold text-cocoa-soft">
-              Same order, same total. You&apos;ll come right back here with your tickets.
+
+            <p className="flex items-center justify-center gap-2 text-sm font-bold text-cocoa-soft" role="status">
+              <span className="live-dot inline-block h-2 w-2 rounded-full bg-mint" aria-hidden />
+              {paying ? "payment received! getting your tickets… 🎉" : "we'll take you to your tickets as soon as you've paid"}
             </p>
           </div>
         )}
@@ -264,7 +326,7 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
         <p className="mt-5 text-center text-xs font-semibold text-cocoa-soft">
           🔒 secured by Tunyt ·{" "}
           <a href={url} className="underline decoration-pink decoration-wavy underline-offset-2 hover:text-pink">
-            pay on tunyt.com instead
+            {step === "pay" ? "trouble paying? finish on tunyt.com" : "pay on tunyt.com instead"}
           </a>
         </p>
       </div>

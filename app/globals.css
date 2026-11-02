@@ -94,3 +94,7 @@ body {
   .float, .float-slow, .wiggle:hover, .pop-in, .confetti span { animation: none; }
   .sticker, .sticker:hover { transition: none; transform: none; }
 }
+
+.live-dot { animation: blink 1.4s ease-in-out infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .3; transform: scale(.75); } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }

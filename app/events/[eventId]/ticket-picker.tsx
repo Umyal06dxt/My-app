@@ -60,6 +60,11 @@ export function TicketPicker({ event }: { event: TunytEvent }) {
         amountPaise: r.session.amountPaise,
         expiresAt: r.session.expiresAt,
         items,
+        eventTitle: event.title,
+        lines: items.map((i) => ({
+          name: event.ticketTypes?.find((t) => t.ticketTypeId === i.ticketTypeId)?.name ?? "Ticket",
+          quantity: i.quantity,
+        })),
         open: true,
         step: "identify",
       });
