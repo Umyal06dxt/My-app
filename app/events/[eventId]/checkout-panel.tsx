@@ -55,11 +55,17 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
   }, []);
   // ~300px of the pop-up (92vh max) is header, summary and footer; the frame gets the rest.
   const fitHeight = Math.max(360, Math.min(640, Math.floor(screenHeight * 0.92) - 300));
-  const frameHeight = reportedHeight ?? fitHeight;
+  // Never taller than the screen allows: a frame that measures its own viewport would otherwise
+  // report a bigger height every time it grows (a resize loop).
+  const frameHeight = reportedHeight == null ? fitHeight : Math.max(200, Math.min(reportedHeight, fitHeight));
   const [frameLoaded, setFrameLoaded] = useState(false);
   const [paying, setPaying] = useState(false);
   // While Razorpay's window is open, the frame covers the whole screen so it shows as a page overlay.
   const [expanded, setExpanded] = useState(false);
+  const expandedRef = useRef(false);
+  useEffect(() => {
+    expandedRef.current = expanded;
+  }, [expanded]);
   const dialog = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -154,7 +160,11 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
       const h = [data?.height, data?.data?.height, data?.payload?.height, /height|resize/.test(type) ? data?.value : undefined]
         .map(Number)
         .find((n) => Number.isFinite(n) && n > 120 && n < 2000);
-      if (h) setReportedHeight(Math.ceil(h) + 4);
+      // Exact height (no padding: padding feeds the loop), ignore tiny changes and anything while fullscreen.
+      if (h && !expandedRef.current) {
+        const next = Math.ceil(h);
+        setReportedHeight((prev) => (prev != null && Math.abs(prev - next) < 2 ? prev : next));
+      }
       if (/expand|fullscreen|modal_open|razorpay_open|payment_open/.test(type)) {
         setExpanded(true);
         return;
