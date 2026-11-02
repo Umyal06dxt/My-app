@@ -58,6 +58,8 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
   const frameHeight = reportedHeight ?? fitHeight;
   const [frameLoaded, setFrameLoaded] = useState(false);
   const [paying, setPaying] = useState(false);
+  // While Razorpay's window is open, the frame covers the whole screen so it shows as a page overlay.
+  const [expanded, setExpanded] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -153,6 +155,12 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
         .map(Number)
         .find((n) => Number.isFinite(n) && n > 120 && n < 2000);
       if (h) setReportedHeight(Math.ceil(h) + 4);
+      if (/expand|fullscreen|modal_open|razorpay_open|payment_open/.test(type)) {
+        setExpanded(true);
+        return;
+      }
+      if (/collapse|exit_fullscreen|modal_close|razorpay_close|shrink/.test(type)) setExpanded(false);
+      if (/paid|success|complete|dismiss|close|cancel|error|fail/.test(type)) setExpanded(false);
       if (type.includes("paid") || type.includes("success") || type.includes("complete")) {
         setPaying(true);
         goToTickets();
@@ -192,7 +200,7 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
   // Escape hides the pop-up, focus moves into it, page behind doesn't scroll.
   useEffect(() => {
     dialog.current?.querySelector<HTMLElement>("input,button")?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !expanded && onClose();
     document.addEventListener("keydown", onKey);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -200,20 +208,23 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose, step]);
+  }, [onClose, step, expanded]);
 
   const stepIndex = { identify: 0, code: 1, pay: 2 }[step];
 
   // Portal to <body>: a transformed/animated ancestor would otherwise trap the fixed overlay.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-cocoa/40 p-3 backdrop-blur-sm sm:items-center" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-cocoa/40 p-3 backdrop-blur-sm sm:items-center"
+      onClick={() => !expanded && onClose()}
+    >
       <div
         ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby="checkout-title"
         onClick={(e) => e.stopPropagation()}
-        className="sticker pop-in relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-[2rem] bg-paper p-6 hover:!transform-none sm:p-7"
+        className={`sticker ${expanded ? "" : "pop-in"} relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-[2rem] bg-paper p-6 hover:!transform-none sm:p-7`}
       >
         <button
           type="button"
@@ -308,7 +319,11 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
             </div>
 
             {/* Tunyt's secure payment frame */}
-            <div className="relative overflow-hidden rounded-2xl bg-white shadow-[0_0_0_2px_var(--cocoa)]">
+            {/* The wrapper keeps its height while the frame goes fullscreen, so nothing jumps. */}
+            <div
+              className="relative overflow-hidden rounded-2xl bg-white shadow-[0_0_0_2px_var(--cocoa)]"
+              style={{ height: frameHeight }}
+            >
               {!frameLoaded && (
                 <div className="absolute inset-0 grid place-items-center bg-paper">
                   <p className="animate-pulse font-display font-semibold text-cocoa-soft">opening secure payment… 🔒</p>
@@ -319,8 +334,12 @@ export function CheckoutPanel({ checkout, onClose, onGone }: Props) {
                 scrolling="auto"
                 src={`${tunytOrigin}/embed/checkout/${encodeURIComponent(sessionId)}#t=${encodeURIComponent(token)}`}
                 onLoad={() => setFrameLoaded(true)}
-                style={{ height: frameHeight }}
-                className="block w-full border-0 bg-white"
+                style={
+                  expanded
+                    ? { position: "fixed", inset: 0, width: "100vw", height: "100dvh", zIndex: 2147483647, background: "transparent", colorScheme: "normal" }
+                    : { height: frameHeight }
+                }
+                className={`block w-full border-0 ${expanded ? "" : "bg-white"}`}
                 allow="payment"
               />
             </div>
